@@ -1,5 +1,3 @@
--- HungDao9999 | Bay Thẳng + Xuyên Tường + Instant Pickup (2 NÚT: ĐI/VỀ)
--- FIXED: Reset 100% trạng thái sau khi bay xong
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ProximityPromptService = game:GetService("ProximityPromptService")
@@ -7,7 +5,12 @@ local ProximityPromptService = game:GetService("ProximityPromptService")
 local player = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
 
--- ====== CONFIG ======
+if PlayerGui:FindFirstChild("HungDaoFlyGUI") then
+	PlayerGui.HungDaoFlyGUI:Destroy()
+	warn("GUI removed")
+	task.wait(0.5)
+end
+
 local SPEED = 500
 local POINTS_GO = {
 	Vector3.new(147, 3.38, -138),
@@ -21,17 +24,67 @@ local POINTS_BACK = {
 }
 local arrivalThreshold = 5
 
--- ====== STATE ======
 local ENABLED = false
-local flyConn, noclipConn, promptConn
+local flyConn, noclipConn, promptConn, robuxPromptConn
 
--- ====== CHARACTER ======
 local function getChar()
 	local c = player.Character or player.CharacterAdded:Wait()
 	return c, c:WaitForChild("HumanoidRootPart"), c:WaitForChild("Humanoid")
 end
 
--- ====== NOCLIP LIÊN TỤC ======
+local function blockRobuxPrompts()
+	if robuxPromptConn then robuxPromptConn:Disconnect() end
+	
+	robuxPromptConn = ProximityPromptService.PromptShown:Connect(function(prompt)
+		pcall(function()
+			if prompt.RequiresLineOfSight == false or 
+			   prompt.Name:lower():find("buy") or 
+			   prompt.Name:lower():find("purchase") or
+			   prompt.Name:lower():find("robux") or
+			   prompt.ActionText:lower():find("buy") or
+			   prompt.ActionText:lower():find("purchase") then
+				prompt.Enabled = false
+				task.wait(0.1)
+				prompt.Enabled = true
+				prompt.MaxActivationDistance = 0
+			end
+		end)
+	end)
+	
+	task.spawn(function()
+		while ENABLED or robuxPromptConn do
+			pcall(function()
+				for _, gui in pairs(PlayerGui:GetChildren()) do
+					if gui:IsA("ScreenGui") then
+						for _, obj in pairs(gui:GetDescendants()) do
+							if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+								local text = obj.Text:lower()
+								if text:find("robux") or text:find("purchase") or text:find("buy") then
+									local parent = obj.Parent
+									while parent and parent ~= gui do
+										if parent:IsA("Frame") then
+											parent.Visible = false
+										end
+										parent = parent.Parent
+									end
+								end
+							end
+						end
+					end
+				end
+			end)
+			task.wait(0.5)
+		end
+	end)
+end
+
+local function unblockRobuxPrompts()
+	if robuxPromptConn then 
+		robuxPromptConn:Disconnect() 
+		robuxPromptConn = nil
+	end
+end
+
 local function enableNoclip(char)
 	if noclipConn then noclipConn:Disconnect() end
 	noclipConn = RunService.Stepped:Connect(function()
@@ -50,7 +103,8 @@ local function disableNoclip(char)
 		noclipConn:Disconnect() 
 		noclipConn = nil
 	end
-	-- Khôi phục collision cho tất cả parts
+	
+	task.wait(0.1)
 	for _, v in pairs(char:GetDescendants()) do
 		if v:IsA("BasePart") then
 			if v.Name == "HumanoidRootPart" then
@@ -63,13 +117,12 @@ local function disableNoclip(char)
 	end
 end
 
--- ====== BAY THẲNG BẰNG CFRAME ======
 local function flyDirectTo(hrp, targetPos)
 	if not hrp or not hrp.Parent or not ENABLED then
 		return false
 	end
 	
-	print("🎯 Flying to: " .. tostring(targetPos))
+	print("Flying to: " .. tostring(targetPos))
 	
 	local startTime = tick()
 	local timeout = 120
@@ -117,15 +170,21 @@ local function flyDirectTo(hrp, targetPos)
 	return completed
 end
 
--- ====== INSTANT PICKUP (TỰ ĐỘNG ẤN E) ======
 local function enableInstantPickup()
 	if promptConn then promptConn:Disconnect() end
 	promptConn = ProximityPromptService.PromptShown:Connect(function(p)
 		if not ENABLED then return end
-		p.HoldDuration = 0
-		task.wait()
+		
 		pcall(function()
-			fireproximityprompt(p)
+			local isRobuxPrompt = p.Name:lower():find("buy") or 
+								 p.Name:lower():find("purchase") or
+								 p.ActionText:lower():find("buy")
+			
+			if not isRobuxPrompt then
+				p.HoldDuration = 0
+				task.wait()
+				fireproximityprompt(p)
+			end
 		end)
 	end)
 end
@@ -137,44 +196,32 @@ local function disableInstantPickup()
 	end
 end
 
--- ====== RESET HOÀN TOÀN TRẠNG THÁI (FIXED) ======
-local function fullReset()
-	print("🔄 Bắt đầu reset hoàn toàn...")
-	
+local function stopAndCleanup()
+	print("Stopping...")
 	ENABLED = false
 	
-	-- Ngắt tất cả connections
 	if flyConn then 
 		flyConn:Disconnect() 
 		flyConn = nil
 	end
 	
 	local success, char, hrp, hum = pcall(getChar)
-	if not success or not char then 
-		print("⚠️ Không tìm thấy character")
-		return 
+	if not success or not char then
+		print("Character not found")
+		return
 	end
 	
-	-- 1. TẮT NOCLIP NGAY LẬP TỨC
 	disableNoclip(char)
-	print("✅ Đã tắt noclip")
+	print("Noclip disabled")
 	
-	-- 2. KHÔI PHỤC GRAVITY
 	workspace.Gravity = 196.2
 	
-	-- 3. RESET HOÀN TOÀN HUMANOID
 	if hum then
 		hum.PlatformStand = false
 		hum.Sit = false
-		hum.AutoRotate = true
-		
-		-- Force về trạng thái đứng bình thường
-		hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-		task.wait(0.1)
 		hum:ChangeState(Enum.HumanoidStateType.Freefall)
 	end
 	
-	-- 4. RESET VẬT LÝ HRP
 	if hrp then
 		hrp.Anchored = false
 		hrp.Velocity = Vector3.new(0, 0, 0)
@@ -183,100 +230,61 @@ local function fullReset()
 		hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
 	end
 	
-	-- 5. RESET TẤT CẢ PARTS TRONG CHARACTER
-	for _, v in pairs(char:GetDescendants()) do
-		if v:IsA("BasePart") then
-			v.Velocity = Vector3.new(0, 0, 0)
-			v.RotVelocity = Vector3.new(0, 0, 0)
-			v.Anchored = false
-			v.Massless = false
-			
-			if v.Name ~= "HumanoidRootPart" then
-				v.CanCollide = true
-			end
-		end
-	end
-	
-	-- 6. ĐỢI CHẠM ĐẤT
-	local touchedGround = false
-	local startWait = tick()
-	repeat
-		task.wait(0.1)
-		if hum and hum.FloorMaterial ~= Enum.Material.Air then
-			touchedGround = true
-		end
-	until touchedGround or tick() - startWait > 5
-	
-	-- 7. FORCE JUMP RỒI LANDING (để reset physics hoàn toàn)
-	if hum and touchedGround then
-		task.wait(0.2)
-		hum.Jump = true
-		task.wait(0.3)
-		
-		-- Đợi hạ xuống lại
-		local landed = false
-		local jumpWait = tick()
-		repeat
-			task.wait(0.1)
-			if hum.FloorMaterial ~= Enum.Material.Air then
-				landed = true
-			end
-		until landed or tick() - jumpWait > 3
-	end
-	
-	-- 8. FINAL RESET
+	task.wait(0.3)
 	if hum then
 		hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-		task.wait(0.1)
+		task.wait(0.2)
+		hum:ChangeState(Enum.HumanoidStateType.Running)
+	end
+	
+	for _, part in pairs(char:GetDescendants()) do
+		if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+			part.CanCollide = true
+			part.Massless = false
+			part.Velocity = Vector3.new(0, 0, 0)
+			part.RotVelocity = Vector3.new(0, 0, 0)
+		end
 	end
 	
 	disableInstantPickup()
+	unblockRobuxPrompts()
 	
-	print("✅ HOÀN TẤT RESET 100% - Có thể di chuyển bình thường")
+	print("Stopped successfully")
 end
 
--- ====== STOP & CLEANUP ======
-local function stopAndCleanup()
-	fullReset()
-end
-
--- ====== MAIN LOGIC ======
 local function run(points, direction)
 	local char, hrp, hum = getChar()
 	
 	enableNoclip(char)
 	enableInstantPickup()
+	blockRobuxPrompts()
 	
 	workspace.Gravity = 0
 	hum:ChangeState(Enum.HumanoidStateType.Physics)
 	
-	print("🚀 Bắt đầu bay " .. direction .. "...")
+	print("Flying " .. direction .. "...")
 	
 	for i, pos in ipairs(points) do
 		if not ENABLED then break end
 		
-		print("=== Điểm " .. i .. "/" .. #points .. " ===")
+		print("Point " .. i .. "/" .. #points)
 		local success = flyDirectTo(hrp, pos)
 		
 		if not success then
-			print("❌ Thất bại tại điểm " .. i)
-			fullReset()
-			return
+			print("Failed at point " .. i)
+			break
 		end
 		
-		print("✅ Đã đến điểm " .. i)
+		print("Reached point " .. i)
 		task.wait(0.3)
 	end
 	
 	if ENABLED then
-		print("✅ Hoàn thành bay " .. direction .. "!")
-		
-		-- RESET HOÀN TOÀN SAU KHI BAY XONG
-		fullReset()
+		print("Completed " .. direction .. "!")
+		stopAndCleanup()
 	end
 end
 
--- ====== GUI 2 NÚT ======
 local gui = Instance.new("ScreenGui", PlayerGui)
 gui.ResetOnSpawn = false
 gui.Name = "HungDaoFlyGUI"
@@ -296,7 +304,6 @@ local stroke = Instance.new("UIStroke", frame)
 stroke.Color = Color3.fromRGB(255, 255, 255)
 stroke.Thickness = 2
 
--- NÚT ĐI
 local btnGo = Instance.new("TextButton", frame)
 btnGo.Size = UDim2.new(0.42, 0, 0.5, 0)
 btnGo.Position = UDim2.new(0.05, 0, 0.35, 0)
@@ -304,7 +311,7 @@ btnGo.Font = Enum.Font.GothamBold
 btnGo.TextSize = 18
 btnGo.TextColor3 = Color3.new(1, 1, 1)
 btnGo.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-btnGo.Text = "ĐI"
+btnGo.Text = "GO"
 btnGo.BorderSizePixel = 0
 
 local btnGoCorner = Instance.new("UICorner", btnGo)
@@ -314,7 +321,6 @@ local btnGoStroke = Instance.new("UIStroke", btnGo)
 btnGoStroke.Color = Color3.fromRGB(255, 255, 255)
 btnGoStroke.Thickness = 1
 
--- NÚT VỀ
 local btnBack = Instance.new("TextButton", frame)
 btnBack.Size = UDim2.new(0.42, 0, 0.5, 0)
 btnBack.Position = UDim2.new(0.53, 0, 0.35, 0)
@@ -322,7 +328,7 @@ btnBack.Font = Enum.Font.GothamBold
 btnBack.TextSize = 18
 btnBack.TextColor3 = Color3.new(1, 1, 1)
 btnBack.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-btnBack.Text = "VỀ"
+btnBack.Text = "BACK"
 btnBack.BorderSizePixel = 0
 
 local btnBackCorner = Instance.new("UICorner", btnBack)
@@ -332,7 +338,6 @@ local btnBackStroke = Instance.new("UIStroke", btnBack)
 btnBackStroke.Color = Color3.fromRGB(255, 255, 255)
 btnBackStroke.Thickness = 1
 
--- LABEL TRẠNG THÁI
 local label = Instance.new("TextLabel", frame)
 label.Size = UDim2.new(0.9, 0, 0.2, 0)
 label.Position = UDim2.new(0.05, 0, 0.05, 0)
@@ -340,65 +345,66 @@ label.Font = Enum.Font.GothamBold
 label.TextSize = 14
 label.TextColor3 = Color3.new(1, 1, 1)
 label.BackgroundTransparency = 1
-label.Text = "SẴN SÀNG"
+label.Text = "READY"
 
--- LOGIC NÚT ĐI
 btnGo.MouseButton1Click:Connect(function()
 	if ENABLED then
 		stopAndCleanup()
 		btnGo.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 		btnBack.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-		label.Text = "SẴN SÀNG"
+		label.Text = "STOPPED"
+		task.wait(1)
+		label.Text = "READY"
 		return
 	end
 	
 	ENABLED = true
 	btnGo.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
 	btnBack.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-	label.Text = "ĐANG BAY ĐI..."
+	label.Text = "FLYING..."
 	
 	task.spawn(function()
-		run(POINTS_GO, "ĐI")
+		run(POINTS_GO, "GO")
 		btnGo.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-		label.Text = "HOÀN THÀNH"
+		label.Text = "DONE"
 		task.wait(1)
-		label.Text = "SẴN SÀNG"
+		label.Text = "READY"
 	end)
 end)
 
--- LOGIC NÚT VỀ
 btnBack.MouseButton1Click:Connect(function()
 	if ENABLED then
 		stopAndCleanup()
 		btnGo.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 		btnBack.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-		label.Text = "SẴN SÀNG"
+		label.Text = "STOPPED"
+		task.wait(1)
+		label.Text = "READY"
 		return
 	end
 	
 	ENABLED = true
 	btnBack.BackgroundColor3 = Color3.fromRGB(255, 165, 0)
 	btnGo.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-	label.Text = "ĐANG BAY VỀ..."
+	label.Text = "RETURNING..."
 	
 	task.spawn(function()
-		run(POINTS_BACK, "VỀ")
+		run(POINTS_BACK, "BACK")
 		btnBack.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-		label.Text = "HOÀN THÀNH"
+		label.Text = "DONE"
 		task.wait(1)
-		label.Text = "SẴN SÀNG"
+		label.Text = "READY"
 	end)
 end)
 
--- XỬ LÝ RESPAWN
 player.CharacterAdded:Connect(function()
 	if ENABLED then
 		task.wait(1)
 		stopAndCleanup()
 		btnGo.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 		btnBack.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-		label.Text = "SẴN SÀNG"
+		label.Text = "READY"
 	end
 end)
 
-print("🌟 HungDao9999 Script Loaded! (FIXED VERSION - Reset 100%) 🌟")
+print("HungDao9999 Script Loaded!")
